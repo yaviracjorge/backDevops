@@ -1,59 +1,214 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Corella DevOps — Documentación de Despliegue
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Sistema web compuesto por un **backend Laravel 12** y un **frontend Angular 19**, totalmente containerizados con Docker y desplegados en un VPS mediante un pipeline de **CI/CD con GitHub Actions**, usando **GHCR** como registro de imágenes, **Traefik v3** como reverse proxy/enrutador con TLS automático, y **Portainer** como panel de administración de contenedores.
 
-## About Laravel
+## Repositorios
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+| Componente | Repositorio |
+|---|---|
+| Frontend (Angular 19) | https://github.com/yaviracjorge/frontDevops |
+| Backend (Laravel 12) | https://github.com/yaviracjorge/backDevops |
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Servicios publicados
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+| Servicio | Subdominio | Descripción |
+|---|---|---|
+| Frontend | `corella.byronrm.com` | Aplicación Angular (SPA) |
+| Backend | `backcorella.byronrm.com` | API Laravel |
+| Portainer | `portainercorella.byronrm.com` | Administración gráfica de Docker |
+| pgAdmin | `pgcorella.byronrm.com` | Administración gráfica de PostgreSQL |
 
-## Learning Laravel
+Todos los subdominios resuelven mediante registros DNS tipo `A` hacia la IP pública del VPS, y Traefik enruta cada petición según el header `Host` a su contenedor correspondiente.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+---
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## . Arquitectura general
 
-## Laravel Sponsors
+```mermaid
+flowchart TB
+    subgraph Internet
+        U[Usuario / Navegador]
+    end
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+    subgraph DNS
+        D1[corella.byronrm.com]
+        D2[backcorella.byronrm.com]
+        D3[portainercorella.byronrm.com]
+        D4[pgcorella.byronrm.com]
+    end
 
-### Premium Partners
+    subgraph VPS["VPS Hostinger (Ubuntu)"]
+        subgraph Firewall["UFW + SSH puerto 3575"]
+            T[Traefik v3.6.1<br/>entrypoints: web / websecure<br/>TLS: Let's Encrypt]
+        end
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+        subgraph NetPub["red docker: traefik-publik (external)"]
+            F[Frontend Angular<br/>Nginx estático]
+            B[Backend Laravel<br/>Nginx + PHP-FPM<br/>supervisord]
+            PT[Portainer]
+            PG[pgAdmin]
+        end
 
-## Contributing
+        subgraph NetDefault["red docker: default"]
+            DB[(PostgreSQL 15)]
+        end
+    end
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+    subgraph CICD["GitHub Actions CI/CD"]
+        GH[Push a main] --> BUILD[Build imagen Docker]
+        BUILD --> GHCR[Push a GHCR]
+        GHCR --> DEPLOY[SSH/SCP al VPS<br/>appleboy/ssh-action + scp-action]
+    end
 
-## Code of Conduct
+    U --> D1 & D2 & D3 & D4
+    D1 -->|443| T
+    D2 -->|443| T
+    D3 -->|443| T
+    D4 -->|443| T
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+    T -->|Host corella.byronrm.com| F
+    T -->|Host backcorella.byronrm.com| B
+    T -->|Host portainercorella.byronrm.com| PT
+    T -->|Host pgcorella.byronrm.com| PG
 
-## Security Vulnerabilities
+    F -->|HTTP/JSON API| B
+    B --> DB
+    PG --> DB
+    PT -. administra .-> F
+    PT -. administra .-> B
+    PT -. administra .-> DB
+    PT -. administra .-> T
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+    DEPLOY --> VPS
+```
 
-## License
+> Ver también el archivo `architecture-diagram.svg` adjunto para una versión estática del diagrama.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### Flujo de una petición
+
+1. El usuario resuelve un subdominio (ej. `corella.byronrm.com`) vía DNS hacia la IP del VPS.
+2. La petición llega al VPS por el puerto 443 (HTTPS), donde **Traefik** es el único servicio expuesto públicamente.
+3. Traefik identifica el contenedor destino según las **labels** definidas en el `docker-compose`/`stack.yml` de cada servicio (regla `Host(...)`) y aplica el certificado TLS correspondiente (Let's Encrypt, resolver `letsencrypt`).
+4. Traefik reenvía el tráfico al contenedor correcto dentro de la red Docker compartida `traefik-publik`.
+5. El **Frontend** (Angular) consume la **API del Backend** (Laravel) vía peticiones HTTP/JSON hacia `backcorella.byronrm.com`.
+6. El **Backend** se conecta a **PostgreSQL** usando el nombre del servicio (`db`) como host, resuelto por el DNS interno de Docker — no por IP fija.
+7. **pgAdmin** y **Portainer** se publican cada uno en su propio subdominio para administración visual, ambos protegidos por sus propias credenciales.
+
+---
+
+## . Componentes y tecnologías
+
+| Componente | Tecnología | Notas |
+|---|---|---|
+| Reverse proxy | Traefik v3.6.1 | Descubrimiento automático vía Docker labels, TLS automático con Let's Encrypt |
+| Panel de administración | Portainer | Publicado vía subdominio propio |
+| Frontend | Angular 19 + Nginx | Build multi-stage (Node para compilar, Nginx para servir estáticos) |
+| Backend | Laravel 12 + PHP 8.2-FPM + Nginx | Un solo contenedor, Nginx y PHP-FPM administrados por **supervisord** |
+| Base de datos | PostgreSQL 15 (alpine) | Persistencia en volumen Docker `postgres_data` |
+| Administrador de BD | pgAdmin 4 | Publicado vía subdominio propio |
+| Registro de imágenes | GitHub Container Registry (GHCR) | `ghcr.io/yaviracjorge/backend-devops` y `ghcr.io/yaviracjorge/angularapp` |
+| CI/CD | GitHub Actions | Build → push a GHCR → despliegue por SSH/SCP al VPS |
+
+---
+
+## . Redes Docker
+
+Se usan dos redes por stack:
+
+- **`traefik-publik`** (externa, compartida entre Traefik, frontend, backend, Portainer y pgAdmin): permite que Traefik descubra y enrute hacia estos contenedores por nombre, ya que **Traefik y el servicio deben compartir la misma red** para que el proxy pueda alcanzar el contenedor destino.
+- **`default`** (interna, por stack): usada para la comunicación privada entre el backend y la base de datos, y entre pgAdmin y la base de datos, sin exponerlas a la red pública.
+
+La red `traefik-publik` se crea una sola vez de forma manual en el VPS (`docker network create traefik-publik`) y se declara como `external: true` en cada `docker-compose`/`stack.yml`, para que Traefik (que vive en su propio stack) y los stacks de aplicación puedan compartirla.
+
+---
+
+## . Variables de entorno
+
+Las credenciales **nunca se versionan en el repositorio**; viven únicamente en un archivo `.env` en el VPS, cargado por cada stack vía `env_file`.
+
+**Backend (`backDevops/.env` en el VPS):**
+
+```env
+DB_CONNECTION=pgsql
+DB_HOST=db
+DB_PORT=5432
+DB_DATABASE=devops
+DB_USERNAME=postgres
+DB_PASSWORD=********
+APP_KEY=base64:********
+APP_URL=https://backcorella.byronrm.com
+CORS_ALLOWED_ORIGINS=https://corella.byronrm.com
+```
+
+**Stack de base de datos (`backDevops/stack.yml`):**
+
+```env
+DB_PASSWORD=********
+PGADMIN_PASSWORD=********
+```
+
+> `DB_HOST=db` funciona porque `db` es el nombre del servicio Postgres dentro de la misma red Docker — no se usa una IP fija.
+
+---
+
+## . Despliegue paso a paso
+
+### .1. Preparación del VPS
+
+1. Servidor: VPS Hostinger (Ubuntu), acceso `root`.
+2. Hardening de SSH: puerto movido de 22 a **3575** mediante un *override* del socket de systemd (`systemctl edit ssh.socket` / `ssh.service`).
+3. Firewall **UFW** habilitado, permitiendo solo:
+   - `3575/tcp` (SSH)
+   - `80/tcp` y `443/tcp` (HTTP/HTTPS)
+4. Instalación de Docker Engine + Docker Compose plugin.
+5. Creación de la red compartida:
+   ```bash
+   docker network create traefik-publik
+   ```
+
+### .2. Despliegue de Traefik + Portainer
+
+Stack base (independiente de las apps), con Traefik escuchando en los entrypoints `web` (80, redirige a HTTPS) y `websecure` (443, TLS vía Let's Encrypt), y Portainer publicado con sus propias labels apuntando a `portainercorella.byronrm.com`.
+
+### 5.3. Despliegue del Backend (Laravel)
+
+- `Dockerfile` (multi-stage no; single-stage con base `php:8.2-fpm-alpine`):
+  - Instala extensiones PHP necesarias (`pdo_pgsql`, `mbstring`, `zip`, `bcmath`, etc.).
+  - Instala dependencias con Composer (`--no-dev`).
+  - Copia configuración de `docker/nginx.conf` y `docker/supervisord.conf`.
+  - `supervisord` administra **Nginx** y **PHP-FPM** como dos procesos dentro de un mismo contenedor.
+- `stack.yml` levanta `db` (Postgres), `pgadmin` y `backend`, todos con labels de Traefik para sus respectivos subdominios.
+- El backend depende de que la base de datos esté saludable (`condition: service_healthy`) antes de arrancar.
+
+### .4. Despliegue del Frontend (Angular)
+
+- `Dockerfile` multi-stage:
+  - **Stage 1**: imagen Node, `npm install` + `ng build` (producción).
+  - **Stage 2**: imagen Nginx, copia solo los archivos estáticos compilados (`dist/`) y la configuración `nginx.conf`.
+- `docker-compose.yml` publica el contenedor en la red `traefik-publik` con labels de Traefik apuntando a `corella.byronrm.com`.
+
+### .5. CI/CD (GitHub Actions)
+
+Flujo (por repositorio, en `.github/workflows/`):
+
+1. **Checkout** del código (`actions/checkout`).
+2. **Build** de la imagen Docker.
+3. **Login y push** a GHCR (`docker/login-action`, `docker/build-push-action`).
+4. **Copia de archivos de configuración** al VPS con `appleboy/scp-action` (ej. `stack.yml`/`docker-compose.yml`).
+5. **Conexión SSH y despliegue** con `appleboy/ssh-action`: `docker pull` de la nueva imagen + `docker compose up -d` (o `docker stack deploy`) para recrear el contenedor con la imagen actualizada.
+
+Secrets usados en GitHub Actions: credenciales de GHCR, host/usuario/puerto/clave o contraseña SSH del VPS.
+
+---
+
+## . Troubleshooting (incidentes reales resueltos)
+
+| Problema | Causa | Solución |
+|---|---|---|
+| Traefik no descubría los contenedores | Incompatibilidad de versión Traefik ↔ API de Docker | Actualización a Traefik **v3.6.1** |
+| Workflow fallaba en el paso de despliegue | Nombre de secret de GitHub Actions no coincidía con el usado en el YAML | Renombrado y sincronizado con el workflow |
+| Backend/frontend no se conectaban vía Traefik | Nombre de red Docker distinto entre el stack de Traefik y el stack de la app | Unificación bajo la red externa **`traefik-publik`** |
+| Job de Actions fallaba al no encontrar archivos | Faltaba el paso `actions/checkout` | Se agregó el step de checkout al inicio del job |
+| (Proyecto previo, Docker Swarm) Traefik no enrutaba en modo Swarm | Redes *overlay* de Swarm no son compatibles con una instancia standalone de Traefik | Se documentó como limitación arquitectónica para ese caso |
+
+---
